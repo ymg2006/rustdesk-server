@@ -869,7 +869,8 @@ impl RendezvousServer {
         );
         let mut msg_out = RendezvousMessage::new();
         let mut p = PunchHoleResponse {
-            socket_addr: la.local_addr.clone(),
+            socket_addr: la.local_addr.first().cloned().unwrap_or_default(),
+            socket_addrs: la.local_addr.clone(),
             pk: self.get_pk(&la.version, la.id).await,
             relay_server: la.relay_server,
             ..Default::default()
