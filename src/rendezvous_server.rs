@@ -1466,7 +1466,7 @@ impl RendezvousServer {
     #[inline]
     fn is_lan(&self, addr: SocketAddr) -> bool {
         let ip = match addr {
-            SocketAddr::V4(v4) => IpAddr::V4(*v4.ip()),
+            SocketAddr::V4(v4) => Some(IpAddr::V4(*v4.ip())),
             SocketAddr::V6(v6) => v6.ip().to_ipv4().map(IpAddr::V4),
         };
         ip.is_some() && self.inner.mask.iter().any(|network| network.contains(ip.unwrap()))
