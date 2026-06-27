@@ -110,7 +110,7 @@ struct Inner {
     serial: i32,
     version: String,
     software_url: String,
-    mask: Option<Ipv4Network>,
+    mask: Vec<Ipv4Network>,
     local_ip: String,
     sk: Option<sign::SecretKey>,
     secure_tcp_pk_b: PublicKey,
@@ -155,8 +155,11 @@ impl RendezvousServer {
         if !version.is_empty() {
             log::info!("software_url: {}, version: {}", software_url, version);
         }
-        let mask = get_arg("mask").parse().ok();
-        let local_ip = if mask.is_none() {
+        let mask: Vec<Ipv4Network> = get_arg("mask")
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        let local_ip = if mask.is_empty() {
             "".to_owned()
         } else {
             get_arg_or(
@@ -187,7 +190,7 @@ impl RendezvousServer {
             }),
             ws_map: Arc::new(Mutex::new(HashMap::new())),
         };
-        log::info!("mask: {:?}", rs.inner.mask);
+        log::info!("masks ({}): {:?}", rs.inner.mask.len(), rs.inner.mask);
         log::info!("local-ip: {:?}", rs.inner.local_ip);
         std::env::set_var("PORT_FOR_API", port.to_string());
         rs.parse_relay_servers(&get_arg("relay-servers"));
@@ -1461,20 +1464,11 @@ impl RendezvousServer {
 
     #[inline]
     fn is_lan(&self, addr: SocketAddr) -> bool {
-        if let Some(network) = &self.inner.mask {
-            match addr {
-                SocketAddr::V4(v4_socket_addr) => {
-                    return network.contains(*v4_socket_addr.ip());
-                }
-
-                SocketAddr::V6(v6_socket_addr) => {
-                    if let Some(v4_addr) = v6_socket_addr.ip().to_ipv4() {
-                        return network.contains(v4_addr);
-                    }
-                }
-            }
-        }
-        false
+        let ip = match addr {
+            SocketAddr::V4(v4) => IpAddr::V4(*v4.ip()),
+            SocketAddr::V6(v6) => v6.ip().to_ipv4().map(IpAddr::V4),
+        };
+        ip.is_some() && self.inner.mask.iter().any(|network| network.contains(ip.unwrap()))
     }
 
     async fn key_exchange_phase1(&mut self, addr: SocketAddr, sink: &mut Option<Sink>) {
