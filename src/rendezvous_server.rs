@@ -1465,11 +1465,19 @@ impl RendezvousServer {
 
     #[inline]
     fn is_lan(&self, addr: SocketAddr) -> bool {
-        let ip = match addr {
-            SocketAddr::V4(v4) => Some(IpAddr::V4(*v4.ip())),
-            SocketAddr::V6(v6) => v6.ip().to_ipv4().map(IpAddr::V4),
-        };
-        ip.is_some() && self.inner.mask.iter().any(|network| network.contains(ip.unwrap()))
+        match addr {
+            SocketAddr::V4(v4) => {
+                let ip = *v4.ip();
+                self.inner.mask.iter().any(|network| network.contains(ip))
+            }
+            SocketAddr::V6(v6) => {
+                if let Some(v4) = v6.ip().to_ipv4() {
+                    self.inner.mask.iter().any(|network| network.contains(v4))
+                } else {
+                    false
+                }
+            }
+        }
     }
 
     async fn key_exchange_phase1(&mut self, addr: SocketAddr, sink: &mut Option<Sink>) {
