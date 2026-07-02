@@ -838,6 +838,7 @@ impl RendezvousServer {
             socket_addr: AddrMangle::encode(addr).into(),
             pk: self.get_pk(&phs.version, phs.id).await,
             relay_server: phs.relay_server.clone(),
+            is_udp: socket.is_some(),
             ..Default::default()
         };
         if let Ok(t) = phs.nat_type.enum_value() {
@@ -987,6 +988,9 @@ impl RendezvousServer {
                     socket_addr,
                     nat_type: ph.nat_type,
                     relay_server,
+                    udp_port: ph.udp_port,
+                    force_relay: ph.force_relay,
+                    upnp_port: ph.upnp_port,
                     ..Default::default()
                 });
             }
