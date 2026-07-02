@@ -857,7 +857,13 @@ message Misc {
     DisplayResolution change_display_resolution = 36;
     MessageQuery message_query = 37;
     int32 follow_current_display = 38;
+    PunchPeerAddr punch_peer_addr = 39;
   }
+}
+
+message PunchPeerAddr {
+  string addr = 1;
+  uint32 udp_port = 2;
 }
 
 message VoiceCallRequest {
