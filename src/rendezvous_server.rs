@@ -483,6 +483,28 @@ impl RendezvousServer {
                         socket.send(&msg_out, addr).await?;
                     }
                 }
+                Some(rendezvous_message::Union::TestNatRequest(tar)) => {
+                    // CRITICAL: respond to TestNatRequest over UDP so the client
+                    // can learn its NAT external port for the punch socket.
+                    // Without this, the client's test_udp_uat always reports
+                    // port=0, causing it to fall back to TCP punch and breaking
+                    // Phase 3 relay upgrade (Phase 3 STUN reports a different
+                    // port than the actual punch socket, so the peer's packets
+                    // never reach us).
+                    let mut res = TestNatResponse {
+                        port: addr.port() as _,
+                        ..Default::default()
+                    };
+                    if self.inner.serial > tar.serial {
+                        let mut cu = ConfigUpdate::new();
+                        cu.serial = self.inner.serial;
+                        cu.rendezvous_servers = (*self.rendezvous_servers).clone();
+                        res.cu = MessageField::from_option(Some(cu));
+                    }
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_test_nat_response(res);
+                    socket.send(&msg_out, addr).await?;
+                }
                 _ => {}
             }
         }
