@@ -29,7 +29,6 @@ message PunchHoleRequest {
   int32 upnp_port = 9;
   bytes socket_addr_v6 = 10;
   repeated bytes local_addrs = 11;
-  bytes custom_tag = 12;
 }
 
 message PunchHole { 
@@ -40,7 +39,6 @@ message PunchHole {
   bool force_relay = 5;
   int32 upnp_port = 6;
   bytes socket_addr_v6 = 7;
-  bytes custom_tag = 8;
 }
 
 message TestNatRequest {
