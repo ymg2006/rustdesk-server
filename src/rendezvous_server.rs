@@ -863,10 +863,6 @@ impl RendezvousServer {
             is_udp: socket.is_some(),
             ..Default::default()
         };
-        // Include B's registration address in socket_addrs so the
-        // controller can inspect it and determine whether it's a LAN
-        // address (e.g. 192.168.x.x, 100.64.x.x) or a public address.
-        p.socket_addrs.push(AddrMangle::encode(addr).into());
         if let Ok(t) = phs.nat_type.enum_value() {
             p.set_nat_type(t);
         }
@@ -1038,6 +1034,7 @@ impl RendezvousServer {
                     udp_port: ph.udp_port,
                     force_relay: ph.force_relay,
                     upnp_port: ph.upnp_port,
+                    custom_tag: ph.custom_tag.clone(),
                     ..Default::default()
                 });
             }
