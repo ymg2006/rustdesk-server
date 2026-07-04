@@ -968,17 +968,21 @@ impl RendezvousServer {
                 return Ok((msg_out, None));
             }
             let mut msg_out = RendezvousMessage::new();
-            // Use reported local address for LAN detection (VPN/multi-segment).
-            // When the client is behind VPN, its connection IP (public) won't
-            // match any private subnet mask, but its local IP (e.g. 10.x.x.x)
-            // will.  The client reports its local IP via ph.local_addr.
-            let local_check = if !ph.local_addr.is_empty() {
-                AddrMangle::decode(&ph.local_addr)
+            // Use reported local addresses for LAN detection (VPN/multi-segment).
+            // The client enumerates all its non-loopback IPv4 addresses and sends
+            // them via ph.local_addrs.  We check each one — if any matches a
+            // configured mask, the client is considered "on LAN".
+            // This handles VPN scenarios where the connection IP is a public IP
+            // but the client's local IP (e.g. 10.x.x.x) belongs to a private subnet.
+            let is_lan = if !ph.local_addrs.is_empty() {
+                ph.local_addrs.iter().any(|addr_bytes| {
+                    let addr = AddrMangle::decode(addr_bytes);
+                    addr.port() > 0 && self.is_lan(addr)
+                })
             } else {
-                addr
+                self.is_lan(addr)
             };
             let peer_is_lan = self.is_lan(peer_addr);
-            let is_lan = self.is_lan(local_check);
             let mut relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
             if ALWAYS_USE_RELAY.load(Ordering::SeqCst) || (peer_is_lan ^ is_lan) {
                 if peer_is_lan {
