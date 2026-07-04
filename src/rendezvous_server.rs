@@ -155,29 +155,10 @@ impl RendezvousServer {
         if !version.is_empty() {
             log::info!("software_url: {}, version: {}", software_url, version);
         }
-        // Build the LAN mask list: user-specified subnets (--mask) + well-known
-        // private/CGNAT ranges so VPN/cross-subnet scenarios work out of the box.
-        let mut mask: Vec<Ipv4Network> = get_arg("mask")
+        let mask: Vec<Ipv4Network> = get_arg("mask")
             .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
-        // Also check against standard private ranges (RFC1918) and CGNAT
-        // (RFC6598).  User can opt out by providing --mask, but these are
-        // so common that it's safer to always include them.
-        // NOTE: Only add the ones not already user-specified.
-        const WELL_KNOWN_LANS: &[&str] = &[
-            "10.0.0.0/8",
-            "172.16.0.0/12",
-            "192.168.0.0/16",
-            "100.64.0.0/10",
-        ];
-        for cidr in WELL_KNOWN_LANS {
-            if let Ok(net) = cidr.parse::<Ipv4Network>() {
-                if !mask.contains(&net) {
-                    mask.push(net);
-                }
-            }
-        }
         let local_ip = if mask.is_empty() {
             "".to_owned()
         } else {
