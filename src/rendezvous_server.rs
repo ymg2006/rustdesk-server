@@ -959,6 +959,7 @@ impl RendezvousServer {
                 let r = peer.read().await;
                 (r.last_reg_time.elapsed().as_millis() as i32, r.socket_addr)
             };
+            log::info!("PunchHoleRequest for id={} forwarding to peer_addr={} (elapsed={}ms)", id, peer_addr, elapsed);
             if elapsed >= REG_TIMEOUT {
                 let mut msg_out = RendezvousMessage::new();
                 msg_out.set_punch_hole_response(PunchHoleResponse {
@@ -1033,6 +1034,7 @@ impl RendezvousServer {
                     udp_port: ph.udp_port,
                     force_relay: ph.force_relay,
                     upnp_port: ph.upnp_port,
+                    custom_tag: ph.custom_tag.clone(),
                     ..Default::default()
                 });
             }
