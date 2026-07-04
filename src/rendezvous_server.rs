@@ -974,17 +974,24 @@ impl RendezvousServer {
             // configured mask, the client is considered "on LAN".
             // This handles VPN scenarios where the connection IP is a public IP
             // but the client's local IP (e.g. 10.x.x.x) belongs to a private subnet.
-            let is_lan = if !ph.local_addrs.is_empty() {
-                ph.local_addrs.iter().any(|addr_bytes| {
+            let (is_lan, is_lan_via_local) = if !ph.local_addrs.is_empty() {
+                let lan = ph.local_addrs.iter().any(|addr_bytes| {
                     let addr = AddrMangle::decode(addr_bytes);
                     addr.port() > 0 && self.is_lan(addr)
-                })
+                });
+                (lan, lan)
             } else {
-                self.is_lan(addr)
+                (self.is_lan(addr), false)
             };
             let peer_is_lan = self.is_lan(peer_addr);
             let mut relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
-            if ALWAYS_USE_RELAY.load(Ordering::SeqCst) || (peer_is_lan ^ is_lan) {
+            // If A reported local_addrs and is_lan became true via those, we
+            // cannot trust peer_is_lan (which only checks B's connection IP).
+            // B might be in the same VPN but behind a different public IP.
+            // Only force relay when both is_lan values are based on connection IPs.
+            if ALWAYS_USE_RELAY.load(Ordering::SeqCst)
+                || (!is_lan_via_local && (peer_is_lan ^ is_lan))
+            {
                 if peer_is_lan {
                     // https://github.com/rustdesk/rustdesk-server/issues/24
                     relay_server = self.inner.local_ip.clone()
@@ -992,7 +999,7 @@ impl RendezvousServer {
                 ph.nat_type = NatType::SYMMETRIC.into(); // will force relay
             }
             let same_intranet: bool = !ws
-                && (peer_is_lan && is_lan || {
+                && (peer_is_lan && is_lan || is_lan_via_local || {
                     match (peer_addr, addr) {
                         (SocketAddr::V4(a), SocketAddr::V4(b)) => a.ip() == b.ip(),
                         (SocketAddr::V6(a), SocketAddr::V6(b)) => a.ip() == b.ip(),
