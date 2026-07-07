@@ -53,6 +53,7 @@ use std::{
 enum Data {
     Msg(Box<RendezvousMessage>, SocketAddr),
     RelayServers0(String),
+    RelayLoads(HashMap<String, i32>),
     RelayServers(RelayServers),
 }
 
@@ -101,6 +102,10 @@ type Sender = mpsc::UnboundedSender<Data>;
 type Receiver = mpsc::UnboundedReceiver<Data>;
 static ROTATION_RELAY_SERVER: AtomicUsize = AtomicUsize::new(0);
 type RelayServers = Vec<String>;
+/// (address, max_capacity) for load-aware relay selection.
+type RelayInfos = Vec<(String, i32)>;
+/// Cached load: (host_with_port, connections)
+type RelayLoads = Arc<Mutex<HashMap<String, i32>>>;
 const CHECK_RELAY_TIMEOUT: u64 = 3_000;
 static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
 static MUST_LOGIN: AtomicBool = AtomicBool::new(false);
@@ -124,6 +129,8 @@ pub struct RendezvousServer {
     tx: Sender,
     relay_servers: Arc<RelayServers>,
     relay_servers0: Arc<RelayServers>,
+    relay_infos: RelayInfos,
+    relay_loads: RelayLoads,
     rendezvous_servers: Arc<Vec<String>>,
     inner: Arc<Inner>,
     ws_map: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
@@ -177,6 +184,8 @@ impl RendezvousServer {
             tx: tx.clone(),
             relay_servers: Default::default(),
             relay_servers0: Default::default(),
+            relay_infos: Default::default(),
+            relay_loads: Default::default(),
             rendezvous_servers: Arc::new(rendezvous_servers),
             inner: Arc::new(Inner {
                 serial,
@@ -322,6 +331,7 @@ impl RendezvousServer {
                         Data::Msg(msg, addr) => { allow_err!(socket.send(msg.as_ref(), addr).await); }
                         Data::RelayServers0(rs) => { self.parse_relay_servers(&rs); }
                         Data::RelayServers(rs) => { self.relay_servers = Arc::new(rs); }
+                        Data::RelayLoads(loads) => { *self.relay_loads.lock().unwrap() = loads; }
                     }
                 }
                 res = socket.next() => {
@@ -1170,8 +1180,21 @@ impl RendezvousServer {
 
     fn parse_relay_servers(&mut self, relay_servers: &str) {
         let rs = get_servers(relay_servers, "relay-servers");
-        self.relay_servers0 = Arc::new(rs);
+        self.relay_servers0 = Arc::new(rs.clone());
         self.relay_servers = self.relay_servers0.clone();
+        // Parse extended format "host:port:capacity"
+        let mut infos = Vec::new();
+        for s in rs.iter() {
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() >= 3 {
+                let capacity = parts[2].parse::<i32>().unwrap_or(100);
+                let addr = format!("{}:{}", parts[0], parts[1]);
+                infos.push((addr, capacity));
+            } else {
+                infos.push((s.clone(), 100)); // default capacity 100
+            }
+        }
+        self.relay_infos = infos;
     }
 
     fn get_relay_server(&self, _pa: IpAddr, _pb: IpAddr) -> String {
@@ -1180,8 +1203,25 @@ impl RendezvousServer {
         } else if self.relay_servers.len() == 1 {
             return self.relay_servers[0].clone();
         }
-        let i = ROTATION_RELAY_SERVER.fetch_add(1, Ordering::SeqCst) % self.relay_servers.len();
-        self.relay_servers[i].clone()
+        // Find relays under 80% load, fall back to any healthy relay
+        let loads = self.relay_loads.lock().unwrap();
+        let mut candidates: Vec<&str> = Vec::new();
+        for s in self.relay_servers.iter() {
+            let (host, capacity) = self.relay_infos.iter()
+                .find(|(addr, _)| s.starts_with(addr) || addr.starts_with(s))
+                .unwrap_or(&(s.clone(), 100));
+            let conns = loads.get(host).copied().unwrap_or(0);
+            if capacity <= 0 || conns as f64 / capacity as f64 < 0.8 {
+                candidates.push(s);
+            }
+        }
+        drop(loads);
+        if candidates.is_empty() {
+            // All overloaded, pick the least loaded one
+            candidates = self.relay_servers.iter().map(|s| s.as_str()).collect();
+        }
+        let i = ROTATION_RELAY_SERVER.fetch_add(1, Ordering::SeqCst) % candidates.len();
+        candidates[i].to_string()
     }
 
     async fn check_cmd(&self, cmd: &str) -> String {

@@ -82,10 +82,12 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
     log::info!("Listening on tcp :{}", port);
     let port2 = port + 2;
     log::info!("Listening on websocket :{}", port2);
+    let port3 = port + 3;
+    log::info!("Listening on status :{}", port3);
     let main_task = async move {
         loop {
             log::info!("Start");
-            io_loop(listen_any(port).await?, listen_any(port2).await?, &key).await;
+            io_loop(listen_any(port).await?, listen_any(port2).await?, listen_any(port3).await?, &key).await;
         }
     };
     let listen_signal = crate::common::listen_signal();
@@ -323,7 +325,10 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
     res
 }
 
-async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
+/// Track active connections for load reporting to hbbs.
+static ACTIVE_CONNS: AtomicUsize = AtomicUsize::new(0);
+
+async fn io_loop(listener: TcpListener, listener2: TcpListener, listener3: TcpListener, key: &str) {
     check_params();
     let limiter = <Limiter>::new(TOTAL_BANDWIDTH.load(Ordering::SeqCst) as _);
     loop {
@@ -332,6 +337,7 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
                 match res {
                     Ok((stream, addr))  => {
                         stream.set_nodelay(true).ok();
+                        ACTIVE_CONNS.fetch_add(1, Ordering::Relaxed);
                         handle_connection(stream, addr, &limiter, key, false).await;
                     }
                     Err(err) => {
@@ -344,11 +350,25 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
                 match res {
                     Ok((stream, addr))  => {
                         stream.set_nodelay(true).ok();
+                        ACTIVE_CONNS.fetch_add(1, Ordering::Relaxed);
                         handle_connection(stream, addr, &limiter, key, true).await;
                     }
                     Err(err) => {
                        log::error!("listener2.accept failed: {}", err);
                        break;
+                    }
+                }
+            }
+            res = listener3.accept() => {
+                match res {
+                    Ok((mut stream, _addr))  => {
+                        // Status port: respond with active connections count
+                        let count = ACTIVE_CONNS.load(Ordering::Relaxed);
+                        let resp = format!("{{"connections":{}}}", count);
+                        let _ = stream.try_write(resp.as_bytes());
+                    }
+                    Err(err) => {
+                       log::error!("listener3.accept failed: {}", err);
                     }
                 }
             }
@@ -375,18 +395,21 @@ async fn handle_connection(
                     stream.write(res.as_bytes()).await.ok();
                 }
             }
+            ACTIVE_CONNS.fetch_sub(1, Ordering::Relaxed);
         });
         return;
     }
     let ip = ip.to_string();
     if BLOCKLIST.read().await.get(&ip).is_some() {
         log::info!("{} blocked", ip);
+        ACTIVE_CONNS.fetch_sub(1, Ordering::Relaxed);
         return;
     }
     let key = key.to_owned();
     let limiter = limiter.clone();
     tokio::spawn(async move {
         allow_err!(make_pair(stream, addr, &key, limiter, ws).await);
+        ACTIVE_CONNS.fetch_sub(1, Ordering::Relaxed);
     });
 }
 
