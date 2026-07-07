@@ -363,7 +363,9 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
                         // Status port: respond with active connections count
                         let count = ACTIVE_CONNS.load(Ordering::Relaxed);
                         let resp = format!("{{"connections":{}}}", count);
-                        let _ = stream.try_write(resp.as_bytes());
+                        tokio::spawn(async move {
+                    let _ = stream.try_write(resp.as_bytes());
+                });
                     }
                     Err(err) => {
                        log::error!("listener3.accept failed: {}", err);
@@ -390,7 +392,9 @@ async fn handle_connection(
             if buf[0] == 0x00 {
                 let count = ACTIVE_CONNS.load(Ordering::Relaxed);
                 let resp = format!("{{{{"connections":{}}}}}", count);
-                let _ = stream.try_write(resp.as_bytes());
+                tokio::spawn(async move {
+                    let _ = stream.try_write(resp.as_bytes());
+                });
                 ACTIVE_CONNS.fetch_sub(1, Ordering::Relaxed);
                 return;
             }
