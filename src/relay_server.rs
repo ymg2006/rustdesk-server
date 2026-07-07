@@ -357,20 +357,6 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
                     }
                 }
             }
-            res = listener3.accept() => {
-                match res {
-                    Ok((mut stream, _addr))  => {
-                        // Status port: respond with active connections count
-                        let count = ACTIVE_CONNS.load(Ordering::Relaxed);
-                        let resp = format!("{{"connections":{}}}", count);
-                        tokio::spawn(async move {
-                    let _ = stream.try_write(resp.as_bytes());
-                });
-                    }
-                    Err(err) => {
-                       log::error!("listener3.accept failed: {}", err);
-                    }
-                }
             }
         }
     }
@@ -391,7 +377,7 @@ async fn handle_connection(
         if let Ok(Ok(_)) = hbb_common::timeout(100, stream.peek(&mut buf)).await {
             if buf[0] == 0x00 {
                 let count = ACTIVE_CONNS.load(Ordering::Relaxed);
-                let resp = format!("{{{{"connections":{}}}}}", count);
+                let resp = format!("{{\"connections\":{}}}", count);
                 tokio::spawn(async move {
                     let _ = stream.try_write(resp.as_bytes());
                 });
