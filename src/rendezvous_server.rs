@@ -860,6 +860,8 @@ impl RendezvousServer {
             socket_addr: AddrMangle::encode(addr).into(),
             pk: self.get_pk(&phs.version, phs.id).await,
             relay_server: phs.relay_server.clone(),
+            relay_servers: phs.relay_servers.into(),
+            relay_rtts: phs.relay_rtts.into(),
             is_udp: socket.is_some(),
             ..Default::default()
         };
