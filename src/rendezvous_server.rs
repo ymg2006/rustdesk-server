@@ -331,7 +331,7 @@ impl RendezvousServer {
                         Data::Msg(msg, addr) => { allow_err!(socket.send(msg.as_ref(), addr).await); }
                         Data::RelayServers0(rs) => { self.parse_relay_servers(&rs); }
                         Data::RelayServers(rs) => { self.relay_servers = Arc::new(rs); }
-                        Data::RelayLoads(loads) => { *self.relay_loads.lock().unwrap() = loads; }
+                        Data::RelayLoads(loads) => { *self.relay_loads.lock().await = loads; }
                     }
                 }
                 res = socket.next() => {
@@ -591,7 +591,7 @@ impl RendezvousServer {
                             // https://github.com/rustdesk/rustdesk-server/issues/24
                             rr.relay_server = self.inner.local_ip.clone();
                         } else if rr.relay_server == self.inner.local_ip {
-                            rr.relay_server = self.get_relay_server(addr.ip(), addr_b.ip());
+                            rr.relay_server = self.get_relay_server(addr.ip(), addr_b.ip()).await;
                         }
                     }
                     msg_out.set_relay_response(rr);
@@ -997,7 +997,7 @@ impl RendezvousServer {
                 (self.is_lan(addr), false)
             };
             let peer_is_lan = self.is_lan(peer_addr);
-            let mut relay_server = self.get_relay_server(addr.ip(), peer_addr.ip());
+            let mut relay_server = self.get_relay_server(addr.ip(), peer_addr.ip()).await;
             // If A reported local_addrs and is_lan became true via those, we
             // cannot trust peer_is_lan (which only checks B's connection IP).
             // B might be in the same VPN but behind a different public IP.
@@ -1197,21 +1197,21 @@ impl RendezvousServer {
         self.relay_infos = infos;
     }
 
-    fn get_relay_server(&self, _pa: IpAddr, _pb: IpAddr) -> String {
+    async fn get_relay_server(&self, _pa: IpAddr, _pb: IpAddr) -> String {
         if self.relay_servers.is_empty() {
             return "".to_owned();
         } else if self.relay_servers.len() == 1 {
             return self.relay_servers[0].clone();
         }
         // Find relays under 80% load, fall back to any healthy relay
-        let loads = self.relay_loads.lock().unwrap();
+        let loads = self.relay_loads.lock().await;
         let mut candidates: Vec<&str> = Vec::new();
         for s in self.relay_servers.iter() {
             let (host, capacity) = self.relay_infos.iter()
                 .find(|(addr, _)| s.starts_with(addr) || addr.starts_with(s))
                 .unwrap_or(&(s.clone(), 100));
             let conns = loads.get(host).copied().unwrap_or(0);
-            if capacity <= 0 || conns as f64 / capacity as f64 < 0.8 {
+            if *capacity <= 0 || conns as f64 / *capacity as f64 < 0.8 {
                 candidates.push(s);
             }
         }
@@ -1358,10 +1358,10 @@ impl RendezvousServer {
                     if let Ok(a) = rs.parse::<IpAddr>() {
                         if let Some(rs) = fds.next() {
                             if let Ok(b) = rs.parse::<IpAddr>() {
-                                res = format!("{:?}", self.get_relay_server(a, b));
+                                res = format!("{:?}", self.get_relay_server(a, b).await);
                             }
                         } else {
-                            res = format!("{:?}", self.get_relay_server(a, a));
+                            res = format!("{:?}", self.get_relay_server(a, a).await);
                         }
                     }
                 }

@@ -41,6 +41,7 @@ message PunchHole {
   int32 upnp_port = 6;
   bytes socket_addr_v6 = 7;
   bytes custom_tag = 8;
+  repeated string relay_servers = 9;
 }
 
 message TestNatRequest {
@@ -67,6 +68,8 @@ message PunchHoleSent {
   string version = 5;
   int32 upnp_port = 6;
   bytes socket_addr_v6 = 7;
+  repeated string relay_servers = 8;
+  repeated int32 relay_rtts = 9;
 }
 
 message RegisterPk {
@@ -112,6 +115,8 @@ message PunchHoleResponse {
   int32 upnp_port = 10;
   bytes socket_addr_v6 = 11;
   repeated bytes socket_addrs = 12;
+  repeated string relay_servers = 13;
+  repeated int32 relay_rtts = 14;
 }
 
 message ConfigUpdate {
@@ -155,6 +160,7 @@ message FetchLocalAddr {
   bytes socket_addr = 1; 
   string relay_server = 2;
   bytes socket_addr_v6 = 3;
+  repeated string relay_servers = 4;
 }
 
 message LocalAddr {
