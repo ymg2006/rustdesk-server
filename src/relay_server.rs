@@ -82,12 +82,10 @@ pub async fn start(port: &str, key: &str) -> ResultType<()> {
     log::info!("Listening on tcp :{}", port);
     let port2 = port + 2;
     log::info!("Listening on websocket :{}", port2);
-    let port3 = port + 3;
-    log::info!("Listening on status :{}", port3);
     let main_task = async move {
         loop {
             log::info!("Start");
-            io_loop(listen_any(port).await?, listen_any(port2).await?, listen_any(port3).await?, &key).await;
+            io_loop(listen_any(port).await?, listen_any(port2).await?, &key).await;
         }
     };
     let listen_signal = crate::common::listen_signal();
@@ -328,7 +326,7 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
 /// Track active connections for load reporting to hbbs.
 static ACTIVE_CONNS: AtomicUsize = AtomicUsize::new(0);
 
-async fn io_loop(listener: TcpListener, listener2: TcpListener, listener3: TcpListener, key: &str) {
+async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
     check_params();
     let limiter = <Limiter>::new(TOTAL_BANDWIDTH.load(Ordering::SeqCst) as _);
     loop {
@@ -384,6 +382,20 @@ async fn handle_connection(
     ws: bool,
 ) {
     let ip = hbb_common::try_into_v4(addr).ip();
+    // Peek first byte to detect hbbs status query (sends 0x00).
+    // This reuses the main relay port instead of requiring a separate port.
+    if !ws {
+        let mut buf = [0u8; 1];
+        if let Ok(Ok(_)) = hbb_common::timeout(100, stream.peek(&mut buf)).await {
+            if buf[0] == 0x00 {
+                let count = ACTIVE_CONNS.load(Ordering::Relaxed);
+                let resp = format!("{{{{"connections":{}}}}}", count);
+                let _ = stream.try_write(resp.as_bytes());
+                ACTIVE_CONNS.fetch_sub(1, Ordering::Relaxed);
+                return;
+            }
+        }
+    }
     if !ws && ip.is_loopback() {
         let limiter = limiter.clone();
         tokio::spawn(async move {

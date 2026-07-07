@@ -1601,19 +1601,42 @@ impl RendezvousServer {
 async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
     let mut futs = Vec::new();
     let rs = Arc::new(Mutex::new(Vec::new()));
+    let loads = Arc::new(Mutex::new(HashMap::new()));
     for x in rs0.iter() {
         let mut host = x.to_owned();
         if !host.contains(':') {
             host = format!("{}:{}", host, config::RELAY_PORT);
         }
         let rs = rs.clone();
+        let loads = loads.clone();
         let x = x.clone();
         futs.push(tokio::spawn(async move {
-            if FramedStream::new(&host, None, CHECK_RELAY_TIMEOUT)
-                .await
-                .is_ok()
-            {
+            // Check relay liveness via FramedStream (existing behavior)
+            let alive = FramedStream::new(&host, None, CHECK_RELAY_TIMEOUT).await.is_ok();
+            if alive {
                 rs.lock().await.push(x);
+                // Query load via raw TCP (send 0x00, read JSON response)
+                // Use raw TcpStream because FramedStream adds length-delimited framing
+                use hbb_common::tokio::io::AsyncWriteExt;
+                use hbb_common::tokio::io::AsyncReadExt;
+                if let Ok(mut raw) = hbb_common::tokio::net::TcpStream::connect(&host).await {
+                    let _ = raw.write(&[0x00]).await;
+                    let mut buf = [0u8; 128];
+                    if let Ok(Ok(n)) = hbb_common::timeout(2000, raw.read(&mut buf)).await {
+                        let text = String::from_utf8_lossy(&buf[..n]);
+                        if let Some(start) = text.find("connections") {
+                            let colon = text[start..].find(':').map(|i| start + i + 1).unwrap_or(0);
+                            if colon > 0 {
+                                let val_end = text[colon..].find(|c: char| !c.is_digit(10))
+                                    .map(|i| colon + i)
+                                    .unwrap_or(n);
+                                if let Ok(conns) = text[colon..val_end].trim().parse::<i32>() {
+                                    loads.lock().await.insert(host, conns);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }));
     }
@@ -1622,6 +1645,10 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
     let rs = std::mem::take(&mut *rs.lock().await);
     if !rs.is_empty() {
         tx.send(Data::RelayServers(rs)).ok();
+    }
+    let loads = std::mem::take(&mut *loads.lock().await);
+    if !loads.is_empty() {
+        tx.send(Data::RelayLoads(loads)).ok();
     }
 }
 
