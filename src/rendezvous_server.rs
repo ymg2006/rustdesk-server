@@ -1018,6 +1018,7 @@ impl RendezvousServer {
                 msg_out.set_fetch_local_addr(FetchLocalAddr {
                     socket_addr,
                     relay_server,
+                    relay_servers: self.relay_servers.iter().map(|s| s.clone()).collect(),
                     ..Default::default()
                 });
             } else {
@@ -1035,6 +1036,7 @@ impl RendezvousServer {
                     force_relay: ph.force_relay,
                     upnp_port: ph.upnp_port,
                     custom_tag: ph.custom_tag.clone(),
+                    relay_servers: self.relay_servers.iter().map(|s| s.clone()).collect(),
                     ..Default::default()
                 });
             }
