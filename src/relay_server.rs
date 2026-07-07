@@ -357,7 +357,6 @@ async fn io_loop(listener: TcpListener, listener2: TcpListener, key: &str) {
                     }
                 }
             }
-            }
         }
     }
 }
