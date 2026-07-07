@@ -1207,11 +1207,12 @@ impl RendezvousServer {
         let loads = self.relay_loads.lock().await;
         let mut candidates: Vec<&str> = Vec::new();
         for s in self.relay_servers.iter() {
+            let default_entry = (s.clone(), 100);
             let (host, capacity) = self.relay_infos.iter()
                 .find(|(addr, _)| s.starts_with(addr) || addr.starts_with(s))
-                .unwrap_or(&(s.clone(), 100));
+                .unwrap_or(&default_entry);
             let conns = loads.get(host).copied().unwrap_or(0);
-            if *capacity <= 0 || conns as f64 / *capacity as f64 < 0.8 {
+            if *capacity <= 0 || conns as f64 / (*capacity as f64) < 0.8 {
                 candidates.push(s);
             }
         }
