@@ -503,6 +503,7 @@ impl RendezvousServer {
                     // never reach us).
                     let mut res = TestNatResponse {
                         port: addr.port() as _,
+                        ip: addr.ip().to_canonical().to_string().into_bytes().into(),
                         ..Default::default()
                     };
                     if self.inner.serial > tar.serial {
@@ -607,6 +608,7 @@ impl RendezvousServer {
                     let mut msg_out = RendezvousMessage::new();
                     let mut res = TestNatResponse {
                         port: addr.port() as _,
+                        ip: addr.ip().to_canonical().to_string().into_bytes().into(),
                         ..Default::default()
                     };
                     if self.inner.serial > tar.serial {
@@ -1409,6 +1411,7 @@ impl RendezvousServer {
                             let mut msg_out = RendezvousMessage::new();
                             msg_out.set_test_nat_response(TestNatResponse {
                                 port: addr.port() as _,
+                                ip: addr.ip().to_canonical().to_string().into_bytes().into(),
                                 ..Default::default()
                             });
                             stream.send(&msg_out).await.ok();
