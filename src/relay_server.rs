@@ -333,11 +333,14 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
     res
 }
 
+/// Track active connections for load reporting to hbbs.
+static ACTIVE_CONNS: AtomicUsize = AtomicUsize::new(0);
+
 async fn io_loop(
-    listener: TcpListener,
-    listener2: TcpListener,
-    listener_console: Option<TcpListener>,
-    key: &str,
+  listener: TcpListener,
+  listener2: TcpListener,
+  listener_console: Option<TcpListener>,
+  key: &str,
 ) {
     check_params();
     let limiter = <Limiter>::new(TOTAL_BANDWIDTH.load(Ordering::SeqCst) as _);
@@ -347,6 +350,7 @@ async fn io_loop(
                 match res {
                     Ok((stream, addr))  => {
                         stream.set_nodelay(true).ok();
+                        ACTIVE_CONNS.fetch_add(1, Ordering::Relaxed);
                         handle_connection(stream, addr, &limiter, key, false).await;
                     }
                     Err(err) => {
@@ -359,6 +363,7 @@ async fn io_loop(
                 match res {
                     Ok((stream, addr))  => {
                         stream.set_nodelay(true).ok();
+                        ACTIVE_CONNS.fetch_add(1, Ordering::Relaxed);
                         handle_connection(stream, addr, &limiter, key, true).await;
                     }
                     Err(err) => {
@@ -391,6 +396,22 @@ async fn handle_connection(
     ws: bool,
 ) {
     let ip = hbb_common::try_into_v4(addr).ip();
+    // Peek first byte to detect hbbs status query (sends 0x00).
+    // This reuses the main relay port instead of requiring a separate port.
+    if !ws {
+        let mut buf = [0u8; 1];
+        if let Ok(Ok(_)) = hbb_common::timeout(100, stream.peek(&mut buf)).await {
+            if buf[0] == 0x00 {
+                let count = ACTIVE_CONNS.load(Ordering::Relaxed);
+                let resp = format!("{{\"connections\":{}}}", count);
+                tokio::spawn(async move {
+                    let _ = stream.try_write(resp.as_bytes());
+                });
+                ACTIVE_CONNS.fetch_sub(1, Ordering::Relaxed);
+                return;
+            }
+        }
+    }
     if !ws && ip.is_loopback() {
         let limiter = limiter.clone();
         tokio::spawn(async move {
@@ -402,18 +423,21 @@ async fn handle_connection(
                     stream.write(res.as_bytes()).await.ok();
                 }
             }
+            ACTIVE_CONNS.fetch_sub(1, Ordering::Relaxed);
         });
         return;
     }
     let ip = ip.to_string();
     if BLOCKLIST.read().await.get(&ip).is_some() {
         log::info!("{} blocked", ip);
+        ACTIVE_CONNS.fetch_sub(1, Ordering::Relaxed);
         return;
     }
     let key = key.to_owned();
     let limiter = limiter.clone();
     tokio::spawn(async move {
         allow_err!(make_pair(stream, addr, &key, limiter, ws).await);
+        ACTIVE_CONNS.fetch_sub(1, Ordering::Relaxed);
     });
 }
 

@@ -22,8 +22,9 @@ fn main() -> ResultType<()> {
         -u, --software-url=[URL] '[DEPRECATED] Sets download url of RustDesk software of newest version'
         -r, --relay-servers=[HOST] 'Sets the default relay servers, separated by comma'
         -M, --rmem=[NUMBER(default={RMEM})] 'Sets UDP recv buffer size, set system rmem_max first, e.g., sudo sysctl -w net.core.rmem_max=52428800. vi /etc/sysctl.conf, net.core.rmem_max=52428800, sudo sysctl –p'
-        , --mask=[MASK] '[DEPRECATED] Determine if the connection comes from LAN, e.g. 192.168.0.0/16'
-        -k, --key=[KEY] 'Only allow the client with the same key'",
+        , --mask=[MASK] 'Determine if the connection comes from LAN, comma-separated for multiple subnets, e.g. 192.168.0.0/16,10.0.0.0/8'
+        -k, --key=[KEY] 'Only allow the client with the same key'
+        , --must-login=[Y|N] 'Only allow the client with login'",
     );
     init_args(&args, "hbbs", "RustDesk ID/Rendezvous Server");
     let port = get_arg_or("port", RENDEZVOUS_PORT.to_string()).parse::<i32>()?;

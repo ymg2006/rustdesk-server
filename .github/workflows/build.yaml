@@ -13,12 +13,6 @@ permissions:
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-      - '[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-[0-9]+'
-      - '[0-9]+.[0-9]+.[0-9]+-[0-9]+'
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,11 +22,9 @@ env:
   
 jobs:
 
-  # binary build
-  build:
-
-    name: Build - ${{ matrix.job.name }}
-    runs-on: ubuntu-22.04
+  build-linux:
+    name: Linux - ${{ matrix.job.name }}
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -41,19 +33,15 @@ jobs:
           - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
           - { name: "armv7",   target: "armv7-unknown-linux-musleabihf" }
           - { name: "i386",    target: "i686-unknown-linux-musl" }
-          #- { name: "amd64fb",    target: "x86_64-unknown-freebsd" }
 
     steps:
-      
       - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
+        uses: actions/checkout@v4
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: "stable"
+          toolchain: stable
           override: true
           default: true
           components: rustfmt
@@ -65,12 +53,12 @@ jobs:
         with:
           command: build
           args: --release --all-features --target=${{ matrix.job.target }}
-          use-cross: true  
+          use-cross: true
 
       - name: Exec chmod
         run: chmod -v a+x target/${{ matrix.job.target }}/release/*
 
-      - name: Publish Artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binaries-linux-${{ matrix.job.name }}
@@ -81,15 +69,12 @@ jobs:
           if-no-files-found: error
 
   build-win:
-    name: Build - windows
+    name: Windows x86_64
     runs-on: windows-2022
 
     steps:
-      
       - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
+        uses: actions/checkout@v4
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -106,69 +91,15 @@ jobs:
         with:
           command: build
           args: --release --all-features --target=x86_64-pc-windows-msvc
-          use-cross: true
 
-      - name: Install NSIS
-        run: |
-          iwr -useb get.scoop.sh -outfile 'install.ps1'
-          .\install.ps1 -RunAsAdmin
-          scoop update
-          scoop bucket add extras
-          scoop install nsis
-
-      - name: Install Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 16
-
-      - name: Sign exe files
-        uses: GermanBluefox/code-sign-action@v7
-        if: false
-        with:
-          certificate: '${{ secrets.WINDOWS_PFX_BASE64 }}'
-          password: '${{ secrets.WINDOWS_PFX_PASSWORD }}'
-          certificatesha1: '${{ secrets.WINDOWS_PFX_SHA1_THUMBPRINT }}'
-          folder: 'target\x86_64-pc-windows-msvc\release'
-          recursive: false
-
-      - name: Build UI browser file
-        run: |
-          npm i
-          npm run build
-        working-directory: ./ui/html
-
-      - name: Build UI setup file
-        run: |
-          rustup default nightly
-          cargo build --release
-          xcopy /y ..\target\x86_64-pc-windows-msvc\release\*.exe setup\bin\
-          xcopy /y target\release\*.exe setup\
-          mkdir setup\logs
-          makensis /V1 setup.nsi
-          mkdir SignOutput
-          mv RustDeskServer.Setup.exe SignOutput\
-          mv ..\target\x86_64-pc-windows-msvc\release\*.exe SignOutput\
-        working-directory: ./ui
-
-      - name: Sign UI setup file 
-        uses: GermanBluefox/code-sign-action@v7
-        if: false
-        with:
-          certificate: '${{ secrets.WINDOWS_PFX_BASE64 }}'
-          password: '${{ secrets.WINDOWS_PFX_PASSWORD }}'
-          certificatesha1: '${{ secrets.WINDOWS_PFX_SHA1_THUMBPRINT }}'
-          folder: './ui/SignOutput'
-          recursive: false
-
-      - name: Publish Artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binaries-windows-x86_64
           path: |
-            ui\SignOutput\hbbr.exe
-            ui\SignOutput\hbbs.exe
-            ui\SignOutput\rustdesk-utils.exe
-            ui\SignOutput\RustDeskServer.Setup.exe
+            target\x86_64-pc-windows-msvc\release\hbbs.exe
+            target\x86_64-pc-windows-msvc\release\hbbr.exe
+            target\x86_64-pc-windows-msvc\release\rustdesk-utils.exe
           if-no-files-found: error
 
   # github (draft) release with all binaries
