@@ -3,17 +3,17 @@
 
 
 
-[![build](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml)
+[![build](https://github.com/ymg2006/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/ymg2006/rustdesk-server/actions/workflows/build.yaml)
 
 - 解决当客户端登录了`API`账号时链接超时的问题
-- s6镜像添加了`API`支持，`API`开源地址 https://github.com/lejianwen/rustdesk-api
+- s6镜像添加了`API`支持，`API`开源地址 https://github.com/ymg2006/rustdesk-api
 - 是否必须登录才能链接， `MUST_LOGIN` 默认为 `N`，设置为 `Y` 则必须登录才能链接
 - `RUSTDESK_API_JWT_KEY`，设置后会通过`JWT`校验token的合法性
 - 支持client websocket (client >= 1.4.1)
 
 ## docker镜像地址
 
-- s6 镜像 [lejianwen/rustdesk-server-s6](https://hub.docker.com/r/lejianwen/rustdesk-server-s6)
+- s6 镜像 [ymg2006/rustdesk-server-s6](https://hub.docker.com/r/ymg2006/rustdesk-server-s6)
 
 ```yaml
  networks:
@@ -29,7 +29,7 @@
        - 21117:21117
        - 21118:21118
        - 21119:21119
-     image: lejianwen/rustdesk-server-s6:latest
+     image: ymg2006/rustdesk-server-s6:latest
      environment:
        - RELAY=<relay_server[:port]>
        - ENCRYPTED_ONLY=1
@@ -49,7 +49,7 @@
        
 ```
 
-- 普通镜像 [lejianwen/rustdesk-server](https://hub.docker.com/r/lejianwen/rustdesk-server)
+- 普通镜像 [ymg2006/rustdesk-server](https://hub.docker.com/r/ymg2006/rustdesk-server)
 
 
 # API功能截图
@@ -58,7 +58,7 @@
 
 ![commnd.png](./readme/command_simple.png)
 
-更多查看 [RustDesk Api](https://github.com/lejianwen/rustdesk-api)
+更多查看 [RustDesk Api](https://github.com/ymg2006/rustdesk-api)
 
 
 --- 
@@ -77,7 +77,7 @@
 
 
 
-[**下载**](https://github.com/lejianwen/rustdesk-server/releases)
+[**下载**](https://github.com/ymg2006/rustdesk-server/releases)
 
 [**说明文件**](https://rustdesk.com/docs/zh-cn/self-host/)
 
@@ -95,7 +95,7 @@ cargo build --release
 - hbbr - RustDesk 中继服务器
 - rustdesk-utils - RustDesk 命令行工具
 
-您可以在 [releases](https://github.com/lejianwen/rustdesk-server/releases) 页面中找到最新的服务端软件。
+您可以在 [releases](https://github.com/ymg2006/rustdesk-server/releases) 页面中找到最新的服务端软件。
 
 如果您需要额外的功能支持，[RustDesk 专业版服务器](https://rustdesk.com/pricing.html) 获取更适合您。
 
@@ -107,18 +107,18 @@ Docker镜像会在每次 GitHub 发布新的release版本时自动构建。我�
 
 ### Classic 传统镜像
 
-这个类型的镜像是基于 `ubuntu-20.04` 进行构建，镜像仅包含两个主要的可执行程序（`hbbr` 和 `hbbs`）。它们可以通过以下tag在 [Docker Hub](https://hub.docker.com/r/lejianwen/rustdesk-server/) 上获得：
+这个类型的镜像是基于 `ubuntu-20.04` 进行构建，镜像仅包含两个主要的可执行程序（`hbbr` 和 `hbbs`）。它们可以通过以下tag在 [Docker Hub](https://hub.docker.com/r/ymg2006/rustdesk-server/) 上获得：
 
 | 架构      | image:tag                                 |
 |---------| ----------------------------------------- |
-| amd64   | `lejianwen/rustdesk-server:latest`         |
-| arm64v8 | `lejianwen/rustdesk-server:latest-arm64v8` |
+| amd64   | `ymg2006/rustdesk-server:latest`         |
+| arm64v8 | `ymg2006/rustdesk-server:latest-arm64v8` |
 
 您可以使用以下命令，直接通过 ``docker run`` 來启动这些镜像：
 
 ```bash
-docker run --name hbbs --net=host -v "$PWD/data:/root" -d lejianwen/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr --net=host -v "$PWD/data:/root" -d lejianwen/rustdesk-server:latest hbbr 
+docker run --name hbbs --net=host -v "$PWD/data:/root" -d ymg2006/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
+docker run --name hbbr --net=host -v "$PWD/data:/root" -d ymg2006/rustdesk-server:latest hbbr 
 ```
 
 或不使用 `--net=host` 参数启动， 但这样 P2P 直连功能将无法工作。
@@ -126,8 +126,8 @@ docker run --name hbbr --net=host -v "$PWD/data:/root" -d lejianwen/rustdesk-ser
 对于使用了 SELinux 的系统，您需要将 ``/root`` 替换为 ``/root:z``，以保证容器的正常运行。或者，也可以通过添加参数 ``--security-opt label=disable`` 来完全禁用 SELinux 容器隔离。
 
 ```bash
-docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d lejianwen/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d lejianwen/rustdesk-server:latest hbbr 
+docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d ymg2006/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
+docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d ymg2006/rustdesk-server:latest hbbr 
 ```
 
 `relay-server-ip` 参数是运行这些容器的服务器的 IP 地址（或 DNS 名称）。如果你不想使用 **21117** 作为 `hbbr` 的服务端口,可使用可选参数 `port` 进行指定。
@@ -149,7 +149,7 @@ services:
       - 21116:21116
       - 21116:21116/udp
       - 21118:21118
-    image: lejianwen/rustdesk-server:latest
+    image: ymg2006/rustdesk-server:latest
     command: hbbs -r rustdesk.example.com:21117
     volumes:
       - ./data:/root
@@ -164,7 +164,7 @@ services:
     ports:
       - 21117:21117
       - 21119:21119
-    image: lejianwen/rustdesk-server:latest
+    image: ymg2006/rustdesk-server:latest
     command: hbbr
     volumes:
       - ./data:/root
@@ -179,26 +179,26 @@ services:
 
 ## 基于 S6-overlay 的镜像
 
-> 这些镜像是针对 `busybox:stable` 构建的，并添加了可执行程序（hbbr 和 hbbs）以及 [S6-overlay](https://github.com/just-containers/s6-overlay)。 它们可以使用以下tag在 [Docker hub](https://hub.docker.com/r/lejianwen/rustdesk-server-s6/) 上获取：
+> 这些镜像是针对 `busybox:stable` 构建的，并添加了可执行程序（hbbr 和 hbbs）以及 [S6-overlay](https://github.com/just-containers/s6-overlay)。 它们可以使用以下tag在 [Docker hub](https://hub.docker.com/r/ymg2006/rustdesk-server-s6/) 上获取：
 
 
 | 架構      | version | image:tag                                    |
 | --------- | ------- | -------------------------------------------- |
-| multiarch | latest  | `lejianwen/rustdesk-server-s6:latest`         |
-| amd64     | latest  | `lejianwen/rustdesk-server-s6:latest-amd64`   |
-| i386      | latest  | `lejianwen/rustdesk-server-s6:latest-i386`    |
-| arm64v8   | latest  | `lejianwen/rustdesk-server-s6:latest-arm64v8` |
-| armv7     | latest  | `lejianwen/rustdesk-server-s6:latest-armv7`   |
-| multiarch | 2       | `lejianwen/rustdesk-server-s6:2`              |
-| amd64     | 2       | `lejianwen/rustdesk-server-s6:2-amd64`        |
-| i386      | 2       | `lejianwen/rustdesk-server-s6:2-i386`         |
-| arm64v8   | 2       | `lejianwen/rustdesk-server-s6:2-arm64v8`      |
-| armv7     | 2       | `lejianwen/rustdesk-server-s6:2-armv7`        |
-| multiarch | 2.0.0   | `lejianwen/rustdesk-server-s6:2.0.0`          |
-| amd64     | 2.0.0   | `lejianwen/rustdesk-server-s6:2.0.0-amd64`    |
-| i386      | 2.0.0   | `lejianwen/rustdesk-server-s6:2.0.0-i386`     |
-| arm64v8   | 2.0.0   | `lejianwen/rustdesk-server-s6:2.0.0-arm64v8`  |
-| armv7     | 2.0.0   | `lejianwen/rustdesk-server-s6:2.0.0-armv7`    |
+| multiarch | latest  | `ymg2006/rustdesk-server-s6:latest`         |
+| amd64     | latest  | `ymg2006/rustdesk-server-s6:latest-amd64`   |
+| i386      | latest  | `ymg2006/rustdesk-server-s6:latest-i386`    |
+| arm64v8   | latest  | `ymg2006/rustdesk-server-s6:latest-arm64v8` |
+| armv7     | latest  | `ymg2006/rustdesk-server-s6:latest-armv7`   |
+| multiarch | 2       | `ymg2006/rustdesk-server-s6:2`              |
+| amd64     | 2       | `ymg2006/rustdesk-server-s6:2-amd64`        |
+| i386      | 2       | `ymg2006/rustdesk-server-s6:2-i386`         |
+| arm64v8   | 2       | `ymg2006/rustdesk-server-s6:2-arm64v8`      |
+| armv7     | 2       | `ymg2006/rustdesk-server-s6:2-armv7`        |
+| multiarch | 2.0.0   | `ymg2006/rustdesk-server-s6:2.0.0`          |
+| amd64     | 2.0.0   | `ymg2006/rustdesk-server-s6:2.0.0-amd64`    |
+| i386      | 2.0.0   | `ymg2006/rustdesk-server-s6:2.0.0-i386`     |
+| arm64v8   | 2.0.0   | `ymg2006/rustdesk-server-s6:2.0.0-arm64v8`  |
+| armv7     | 2.0.0   | `ymg2006/rustdesk-server-s6:2.0.0-armv7`    |
 
 强烈建议您使用`major version` 或 `latest` tag 的 `multiarch` 架构的镜像。
 
@@ -211,7 +211,7 @@ docker run --name rustdesk-server \
   --net=host \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
-  -v "$PWD/data:/data" -d lejianwen/rustdesk-server-s6:latest
+  -v "$PWD/data:/data" -d ymg2006/rustdesk-server-s6:latest
 ```
 
 或刪去 `--net=host` 参数， 但 P2P 直连功能将无法工作。
@@ -222,7 +222,7 @@ docker run --name rustdesk-server \
   -p 21117:21117 -p 21118:21118 -p 21119:21119 \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
-  -v "$PWD/data:/data" -d lejianwen/rustdesk-server-s6:latest
+  -v "$PWD/data:/data" -d ymg2006/rustdesk-server-s6:latest
 ```
 
 或着您也可以使用 docker-compose 文件:
@@ -241,7 +241,7 @@ services:
       - 21117:21117
       - 21118:21118
       - 21119:21119
-    image: lejianwen/rustdesk-server-s6:latest
+    image: ymg2006/rustdesk-server-s6:latest
     environment:
       - "RELAY=rustdesk.example.com:21117"
       - "ENCRYPTED_ONLY=1"
@@ -279,7 +279,7 @@ docker run --name rustdesk-server \
   -e "DB_URL=/db/db_v2.sqlite3" \
   -e "KEY_PRIV=FR2j78IxfwJNR+HjLluQ2Nh7eEryEeIZCwiQDPVe+PaITKyShphHAsPLn7So0OqRs92nGvSRdFJnE2MSyrKTIQ==" \
   -e "KEY_PUB=iEyskoaYRwLDy5+0qNDqkbPdpxr0kXRSZxNjEsqykyE=" \
-  -v "$PWD/db:/db" -d lejianwen/rustdesk-server-s6:latest
+  -v "$PWD/db:/db" -d ymg2006/rustdesk-server-s6:latest
 ```
 
 ```yaml
@@ -296,7 +296,7 @@ services:
       - 21117:21117
       - 21118:21118
       - 21119:21119
-    image: lejianwen/rustdesk-server-s6:latest
+    image: ymg2006/rustdesk-server-s6:latest
     environment:
       - "RELAY=rustdesk.example.com:21117"
       - "ENCRYPTED_ONLY=1"
@@ -324,7 +324,7 @@ docker service create --name rustdesk-server \
   -e "ENCRYPTED_ONLY=1" \
   -e "DB_URL=/db/db_v2.sqlite3" \
   --mount "type=bind,source=$PWD/db,destination=/db" \
-  lejianwen/rustdesk-server-s6:latest
+  ymg2006/rustdesk-server-s6:latest
 ```
 
 ```yaml
@@ -341,7 +341,7 @@ services:
       - 21117:21117
       - 21118:21118
       - 21119:21119
-    image: lejianwen/rustdesk-server-s6:latest
+    image: ymg2006/rustdesk-server-s6:latest
     environment:
       - "RELAY=rustdesk.example.com:21117"
       - "ENCRYPTED_ONLY=1"
@@ -373,7 +373,7 @@ secrets:
 如果您沒有（或不想）在系统上安装 `rustdesk-utils` 套件，您可以使用 Docker 执行相同的命令：
 
 ```bash
-docker run --rm --entrypoint /usr/bin/rustdesk-utils  lejianwen/rustdesk-server-s6:latest genkeypair
+docker run --rm --entrypoint /usr/bin/rustdesk-utils  ymg2006/rustdesk-server-s6:latest genkeypair
 ```
 
 运行后的输出内容如下：
@@ -385,7 +385,7 @@ Secret Key:  egAVd44u33ZEUIDTtksGcHeVeAwywarEdHmf99KM5ajwEsuG3NQFT9coAfiZ6nen4hf
 
 ## .deb 套件
 
-每个可执行文件都有单独的 .deb 套件可供使用，您可以在 [releases](https://github.com/lejianwen/rustdesk-server/releases) 页面中找到它們。
+每个可执行文件都有单独的 .deb 套件可供使用，您可以在 [releases](https://github.com/ymg2006/rustdesk-server/releases) 页面中找到它們。
 這些套件适用于以下发行版：
 
 - Ubuntu 22.04 LTS

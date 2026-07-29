@@ -17,7 +17,7 @@ path = "src/utils.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hbb_common = { git = "https://github.com/laiyouxing/hbb_common.git" }
+hbb_common = { git = "https://github.com/ymg2006/hbb_common.git" }
 serde_derive = "1.0"
 serde = "1.0"
 serde_json = "1.0"
@@ -61,7 +61,7 @@ reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocki
 reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocking", "socks", "json", "rustls-tls", "rustls-tls-native-roots", "gzip"], default-features=false }
 
 [build-dependencies]
-hbb_common = { git = "https://github.com/laiyouxing/hbb_common.git" }
+hbb_common = { git = "https://github.com/ymg2006/hbb_common.git" }
 
 [workspace]
 exclude = ["ui"]

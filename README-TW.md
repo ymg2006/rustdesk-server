@@ -1,16 +1,16 @@
 # 关于此分支
 
-[![build](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml)
+[![build](https://github.com/ymg2006/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/ymg2006/rustdesk-server/actions/workflows/build.yaml)
 
 - 解决当客户端登录了`Api`账号时链接超时的问题
-- s6镜像添加了`Api`支持，`Api`开源地址 https://github.com/lejianwen/rustdesk-api
+- s6镜像添加了`Api`支持，`Api`开源地址 https://github.com/ymg2006/rustdesk-api
 - 是否必须登录才能链接， `MUST_LOGIN` 默认为 `N`，设置为 `Y` 则必须登录才能链接
 - `RUSTDESK_API_JWT_KEY`，设置后会通过`JWT`校验token的合法性
 - Support client websocket (client >= 1.4.1)
 
 ## docker镜像地址
 
-- s6 镜像 [lejianwen/rustdesk-server-s6](https://hub.docker.com/r/lejianwen/rustdesk-server-s6)
+- s6 镜像 [ymg2006/rustdesk-server-s6](https://hub.docker.com/r/ymg2006/rustdesk-server-s6)
 
 ```yaml
  networks:
@@ -26,7 +26,7 @@
        - 21117:21117
        - 21118:21118
        - 21119:21119
-     image: lejianwen/rustdesk-server-s6:latest
+     image: ymg2006/rustdesk-server-s6:latest
      environment:
        - RELAY=<relay_server[:port]>
        - ENCRYPTED_ONLY=1
@@ -46,7 +46,7 @@
 
 ```
 
-- 普通镜像 [lejianwen/rustdesk-server](https://hub.docker.com/r/lejianwen/rustdesk-server)
+- 普通镜像 [ymg2006/rustdesk-server](https://hub.docker.com/r/ymg2006/rustdesk-server)
 
 # API功能截图
 
@@ -54,7 +54,7 @@
 
 ![commnd.png](./readme/command_simple.png)
 
-更多查看 [RustDesk Api](https://github.com/lejianwen/rustdesk-api)
+更多查看 [RustDesk Api](https://github.com/ymg2006/rustdesk-api)
 
 
 

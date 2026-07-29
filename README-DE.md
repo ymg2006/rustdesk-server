@@ -1,16 +1,16 @@
 
 # About this repository
 
-[![build](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml)
+[![build](https://github.com/ymg2006/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/ymg2006/rustdesk-server/actions/workflows/build.yaml)
 
 - Solves the issue of connection timeout when the client logs in with an `API` account
-- Added `API` support to the s6 image, `API` open-source repository: https://github.com/lejianwen/rustdesk-api
+- Added `API` support to the s6 image, `API` open-source repository: https://github.com/ymg2006/rustdesk-api
 - Whether login is required to connect, `MUST_LOGIN` defaults to `N`, set to `Y` to require login for connection
 - `RUSTDESK_API_JWT_KEY`, when set, validates the token's legitimacy through `JWT`
 
 ## docker
 
-- s6 Image [lejianwen/rustdesk-server-s6](https://hub.docker.com/r/lejianwen/rustdesk-server-s6)
+- s6 Image [ymg2006/rustdesk-server-s6](https://hub.docker.com/r/ymg2006/rustdesk-server-s6)
 
 ```yaml
  networks:
@@ -26,7 +26,7 @@
        - 21117:21117
        - 21118:21118
        - 21119:21119
-     image: lejianwen/rustdesk-server-s6:latest
+     image: ymg2006/rustdesk-server-s6:latest
      environment:
        - RELAY=<relay_server[:port]>
        - ENCRYPTED_ONLY=1
@@ -46,7 +46,7 @@
        
 ```
 
-- Common Image [lejianwen/rustdesk-server](https://hub.docker.com/r/lejianwen/rustdesk-server)
+- Common Image [ymg2006/rustdesk-server](https://hub.docker.com/r/ymg2006/rustdesk-server)
 
 
 # API Screenshot
@@ -55,7 +55,7 @@
 
 ![commnd.png](./readme/command_simple.png)
 
-More See [RustDesk Api](https://github.com/lejianwen/rustdesk-api)
+More See [RustDesk Api](https://github.com/ymg2006/rustdesk-api)
 
 
 
