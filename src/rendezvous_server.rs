@@ -126,6 +126,15 @@ enum ConnectionAuthError {
     ServerMisconfigured,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyExchangeError {
+    InvalidKeyCount,
+    InvalidPublicKeyLength,
+    InvalidCiphertextLength,
+    DecryptionFailed,
+    InvalidSymmetricKeyLength,
+}
+
 fn validate_connection_auth(
     supplied_licence_key: &str,
     supplied_token: &str,
@@ -754,35 +763,25 @@ impl RendezvousServer {
                     }
                 }
                 Some(rendezvous_message::Union::KeyExchange(ex)) => {
-                    log::trace!("KeyExchange {:?} <- bytes: {:?}", addr, hex::encode(&bytes));
-                    if ex.keys.len() != 2 {
-                        log::error!("Handshake failed: invalid phase 2 key exchange message");
+                    if ws {
+                        log::warn!(
+                            "Rejecting KeyExchange received over WebSocket from {}",
+                            addr
+                        );
                         return false;
                     }
-                    log::trace!("KeyExchange their_pk: {:?}", hex::encode(&ex.keys[0]));
-                    log::trace!("KeyExchange box: {:?}", hex::encode(&ex.keys[1]));
-                    let their_pk: [u8; 32] = ex.keys[0].to_vec().try_into().unwrap();
-                    let cryptobox: [u8; 48] = ex.keys[1].to_vec().try_into().unwrap();
-                    let symetric_key = get_symetric_key_from_msg(
-                        self.inner.secure_tcp_sk_b.0,
-                        their_pk,
-                        &cryptobox,
-                    );
-                    log::debug!("KeyExchange symetric key: {:?}", hex::encode(&symetric_key));
-                    let key = secretbox::Key::from_slice(&symetric_key);
-                    match key {
-                        Some(key) => {
-                            if let Some(sink) = sink.as_mut() {
-                                match sink {
-                                    Sink::Wss(s) => s.encrypt = Some(Encrypt::new(key)),
-                                    Sink::Tss(s) => s.encrypt = Some(Encrypt::new(key)),
-                                }
+                    match derive_key_from_exchange(&ex, self.inner.secure_tcp_sk_b.0) {
+                        Ok(key) => {
+                            if let Some(Sink::Tss(s)) = sink.as_mut() {
+                                s.encrypt = Some(Encrypt::new(key));
+                                log::debug!("KeyExchange symmetric key successfully derived");
+                                return true;
                             }
-                            log::debug!("KeyExchange symetric key set");
-                            return true;
+                            log::warn!("KeyExchange completed without a TCP sink for {}", addr);
+                            return false;
                         }
-                        None => {
-                            log::error!("KeyExchange symetric key NOT set");
+                        Err(err) => {
+                            log::warn!("Invalid KeyExchange from {}: {:?}", addr, err);
                             return false;
                         }
                     }
@@ -1913,23 +1912,55 @@ async fn create_tcp_listener(bind_addr: Option<IpAddr>, port: i32) -> ResultType
     Ok(s)
 }
 
-fn get_symetric_key_from_msg(
+fn derive_key_from_exchange(
+    ex: &KeyExchange,
+    our_sk_b: [u8; 32],
+) -> Result<secretbox::Key, KeyExchangeError> {
+    if ex.keys.len() != 2 {
+        return Err(KeyExchangeError::InvalidKeyCount);
+    }
+    if ex.keys[0].len() != 32 {
+        log::warn!(
+            "Invalid KeyExchange public key length: {}",
+            ex.keys[0].len()
+        );
+        return Err(KeyExchangeError::InvalidPublicKeyLength);
+    }
+    if ex.keys[1].len() != 48 {
+        log::warn!(
+            "Invalid KeyExchange ciphertext length: {}",
+            ex.keys[1].len()
+        );
+        return Err(KeyExchangeError::InvalidCiphertextLength);
+    }
+    let their_pk = ex.keys[0]
+        .as_ref()
+        .try_into()
+        .map_err(|_| KeyExchangeError::InvalidPublicKeyLength)?;
+    let encrypted_key = ex.keys[1]
+        .as_ref()
+        .try_into()
+        .map_err(|_| KeyExchangeError::InvalidCiphertextLength)?;
+    let symmetric_key = get_symmetric_key_from_msg(our_sk_b, their_pk, encrypted_key)?;
+    secretbox::Key::from_slice(&symmetric_key).ok_or(KeyExchangeError::InvalidSymmetricKeyLength)
+}
+
+fn get_symmetric_key_from_msg(
     our_sk_b: [u8; 32],
     their_pk_b: [u8; 32],
     sealed_value: &[u8; 48],
-) -> [u8; 32] {
+) -> Result<[u8; 32], KeyExchangeError> {
     let their_pk_b = box_::PublicKey(their_pk_b);
     let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
     let sk = box_::SecretKey(our_sk_b);
-    let key = box_::open(sealed_value, &nonce, &their_pk_b, &sk);
-    match key {
-        Ok(key) => {
-            let mut key_array = [0u8; 32];
-            key_array.copy_from_slice(&key);
-            key_array
-        }
-        Err(e) => panic!("Error while opening the seal key{:?}", e),
+    let key = box_::open(sealed_value, &nonce, &their_pk_b, &sk)
+        .map_err(|_| KeyExchangeError::DecryptionFailed)?;
+    if key.len() != secretbox::KEYBYTES {
+        return Err(KeyExchangeError::InvalidSymmetricKeyLength);
     }
+    key.as_slice()
+        .try_into()
+        .map_err(|_| KeyExchangeError::InvalidSymmetricKeyLength)
 }
 
 #[cfg(test)]
@@ -1977,6 +2008,72 @@ mod tests {
         assert_eq!(
             validate_auth("", "token", "", true, false, true),
             Err(ConnectionAuthError::ServerMisconfigured)
+        );
+    }
+
+    #[test]
+    fn malformed_key_exchange_is_rejected_without_panicking() {
+        let server_sk = [0u8; 32];
+        for key_count in [0, 1, 3] {
+            let ex = KeyExchange {
+                keys: vec![Default::default(); key_count],
+                ..Default::default()
+            };
+            assert_eq!(
+                derive_key_from_exchange(&ex, server_sk),
+                Err(KeyExchangeError::InvalidKeyCount)
+            );
+        }
+
+        for public_key_len in [31, 33] {
+            let ex = KeyExchange {
+                keys: vec![vec![0; public_key_len].into(), vec![0; 48].into()],
+                ..Default::default()
+            };
+            assert_eq!(
+                derive_key_from_exchange(&ex, server_sk),
+                Err(KeyExchangeError::InvalidPublicKeyLength)
+            );
+        }
+
+        for ciphertext_len in [47, 49] {
+            let ex = KeyExchange {
+                keys: vec![vec![0; 32].into(), vec![0; ciphertext_len].into()],
+                ..Default::default()
+            };
+            assert_eq!(
+                derive_key_from_exchange(&ex, server_sk),
+                Err(KeyExchangeError::InvalidCiphertextLength)
+            );
+        }
+
+        let ex = KeyExchange {
+            keys: vec![vec![0; 32].into(), vec![0; 48].into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            derive_key_from_exchange(&ex, server_sk),
+            Err(KeyExchangeError::DecryptionFailed)
+        );
+    }
+
+    #[test]
+    fn valid_key_exchange_derives_symmetric_key() {
+        assert!(hbb_common::sodiumoxide::init().is_ok());
+        let (server_pk, server_sk) = box_::gen_keypair();
+        let (client_pk, client_sk) = box_::gen_keypair();
+        let expected = secretbox::gen_key();
+        let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+        let encrypted = box_::seal(expected.as_ref(), &nonce, &server_pk, &client_sk);
+        let ex = KeyExchange {
+            keys: vec![client_pk.as_ref().to_vec().into(), encrypted.into()],
+            ..Default::default()
+        };
+
+        let derived = derive_key_from_exchange(&ex, server_sk.0);
+        assert_eq!(
+            derived.as_ref().map(|key| key.as_ref()),
+            Ok(expected.as_ref())
         );
     }
 
