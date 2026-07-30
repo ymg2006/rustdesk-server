@@ -97,8 +97,12 @@ type Sender = mpsc::UnboundedSender<Data>;
 type Receiver = mpsc::UnboundedReceiver<Data>;
 static ROTATION_RELAY_SERVER: AtomicUsize = AtomicUsize::new(0);
 type RelayServers = Vec<String>;
-/// (address, max_capacity) for load-aware relay selection.
-type RelayInfos = Vec<(String, i32)>;
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RelayInfo {
+    address: String,
+    capacity: i32,
+}
+type RelayInfos = Vec<RelayInfo>;
 /// Cached load: (host_with_port, connections)
 type RelayLoads = Arc<Mutex<HashMap<String, i32>>>;
 const CHECK_RELAY_TIMEOUT: u64 = 3_000;
@@ -116,6 +120,87 @@ fn set_always_use_relay(value: &str) -> Result<(), ()> {
         }
         _ => Err(()),
     }
+}
+
+fn parse_relay_entry(value: &str) -> Option<RelayInfo> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let (address, capacity) = if value.starts_with('[') {
+        let bracket = value.find(']')?;
+        let ip = &value[1..bracket];
+        ip.parse::<Ipv6Addr>().ok()?;
+        let suffix = &value[bracket + 1..];
+        let parts: Vec<&str> = suffix.strip_prefix(':')?.split(':').collect();
+        match parts.as_slice() {
+            [port] => {
+                port.parse::<u16>().ok()?;
+                (value.to_owned(), 100)
+            }
+            [port, capacity] => {
+                port.parse::<u16>().ok()?;
+                (format!("[{}]:{}", ip, port), capacity.parse::<i32>().ok()?)
+            }
+            _ => return None,
+        }
+    } else {
+        let colon_count = value.bytes().filter(|byte| *byte == b':').count();
+        match colon_count {
+            0 => (value.to_owned(), 100),
+            1 => {
+                let (host, port) = value.rsplit_once(':')?;
+                if host.is_empty() {
+                    return None;
+                }
+                port.parse::<u16>().ok()?;
+                (value.to_owned(), 100)
+            }
+            2 => {
+                let (address, capacity) = value.rsplit_once(':')?;
+                let (host, port) = address.rsplit_once(':')?;
+                if host.is_empty() {
+                    return None;
+                }
+                port.parse::<u16>().ok()?;
+                (address.to_owned(), capacity.parse::<i32>().ok()?)
+            }
+            _ => return None,
+        }
+    };
+    if capacity <= 0 {
+        return None;
+    }
+    Some(RelayInfo { address, capacity })
+}
+
+fn relay_connect_address(address: &str) -> String {
+    if address.starts_with('[') || address.matches(':').count() == 1 {
+        address.to_owned()
+    } else {
+        format!("{}:{}", address, config::RELAY_PORT)
+    }
+}
+
+fn normalize_relay_entries(relay_servers: &str) -> RelayInfos {
+    let mut infos = Vec::new();
+    for entry in relay_servers.split(',') {
+        match parse_relay_entry(entry) {
+            Some(info)
+                if !infos
+                    .iter()
+                    .any(|item: &RelayInfo| item.address == info.address) =>
+            {
+                infos.push(info);
+            }
+            Some(_) => {}
+            None if !entry.trim().is_empty() => {
+                log::warn!("Ignoring malformed relay server entry");
+            }
+            None => {}
+        }
+    }
+    infos
 }
 
 // Store punch hole requests
@@ -1323,21 +1408,10 @@ impl RendezvousServer {
     }
 
     fn parse_relay_servers(&mut self, relay_servers: &str) {
-        let rs = get_servers(relay_servers, "relay-servers");
+        let infos = normalize_relay_entries(relay_servers);
+        let rs: Vec<String> = infos.iter().map(|info| info.address.clone()).collect();
         self.relay_servers0 = Arc::new(rs.clone());
         self.relay_servers = self.relay_servers0.clone();
-        // Parse extended format "host:port:capacity"
-        let mut infos = Vec::new();
-        for s in rs.iter() {
-            let parts: Vec<&str> = s.split(':').collect();
-            if parts.len() >= 3 {
-                let capacity = parts[2].parse::<i32>().unwrap_or(100);
-                let addr = format!("{}:{}", parts[0], parts[1]);
-                infos.push((addr, capacity));
-            } else {
-                infos.push((s.clone(), 100)); // default capacity 100
-            }
-        }
         self.relay_infos = infos;
     }
 
@@ -1347,28 +1421,48 @@ impl RendezvousServer {
         } else if self.relay_servers.len() == 1 {
             return self.relay_servers[0].clone();
         }
-        // Find relays under 80% load, fall back to any healthy relay
-        let loads = self.relay_loads.lock().await;
-        let mut candidates: Vec<&str> = Vec::new();
-        for s in self.relay_servers.iter() {
-            let default_entry = (s.clone(), 100);
-            let (host, capacity) = self
-                .relay_infos
+        let loads = self.relay_loads.lock().await.clone();
+        let known: Vec<(&str, i32, i32)> = self
+            .relay_servers
+            .iter()
+            .filter_map(|address| {
+                let info = self
+                    .relay_infos
+                    .iter()
+                    .find(|info| info.address == *address)?;
+                loads
+                    .get(&relay_connect_address(address))
+                    .copied()
+                    .map(|load| (address.as_str(), load, info.capacity))
+            })
+            .collect();
+        let mut candidates: Vec<&str> = if known.is_empty() {
+            self.relay_servers.iter().map(String::as_str).collect()
+        } else {
+            let under: Vec<_> = known
                 .iter()
-                .find(|(addr, _)| s.starts_with(addr) || addr.starts_with(s))
-                .unwrap_or(&default_entry);
-            let conns = loads.get(host).copied().unwrap_or(0);
-            if *capacity <= 0 || conns as f64 / (*capacity as f64) < 0.8 {
-                candidates.push(s);
-            }
-        }
-        drop(loads);
+                .copied()
+                .filter(|(_, load, capacity)| i64::from(*load) * 10 < i64::from(*capacity) * 8)
+                .collect();
+            let pool = if under.is_empty() { &known } else { &under };
+            let best = pool
+                .iter()
+                .map(|(_, load, capacity)| (i64::from(*load), i64::from(*capacity)))
+                .min_by(|(load_a, cap_a), (load_b, cap_b)| (load_a * cap_b).cmp(&(load_b * cap_a)));
+            pool.iter()
+                .filter(|(_, load, capacity)| {
+                    best.is_some_and(|(best_load, best_capacity)| {
+                        i64::from(*load) * best_capacity == best_load * i64::from(*capacity)
+                    })
+                })
+                .map(|(address, _, _)| *address)
+                .collect()
+        };
         if candidates.is_empty() {
-            // All overloaded, pick the least loaded one
-            candidates = self.relay_servers.iter().map(|s| s.as_str()).collect();
+            return String::new();
         }
         let i = ROTATION_RELAY_SERVER.fetch_add(1, Ordering::SeqCst) % candidates.len();
-        candidates[i].to_string()
+        candidates.swap_remove(i).to_string()
     }
 
     async fn check_cmd(&self, cmd: &str) -> String {
@@ -1792,10 +1886,7 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
     let rs = Arc::new(Mutex::new(Vec::new()));
     let loads = Arc::new(Mutex::new(HashMap::new()));
     for x in rs0.iter() {
-        let mut host = x.to_owned();
-        if !host.contains(':') {
-            host = format!("{}:{}", host, config::RELAY_PORT);
-        }
+        let host = relay_connect_address(x);
         let rs = rs.clone();
         let loads = loads.clone();
         let x = x.clone();
@@ -1835,13 +1926,9 @@ async fn check_relay_servers(rs0: Arc<RelayServers>, tx: Sender) {
     join_all(futs).await;
     log::debug!("check_relay_servers");
     let rs = std::mem::take(&mut *rs.lock().await);
-    if !rs.is_empty() {
-        tx.send(Data::RelayServers(rs)).ok();
-    }
+    tx.send(Data::RelayServers(rs)).ok();
     let loads = std::mem::take(&mut *loads.lock().await);
-    if !loads.is_empty() {
-        tx.send(Data::RelayLoads(loads)).ok();
-    }
+    tx.send(Data::RelayLoads(loads)).ok();
 }
 
 // temp solution to solve udp socket failure
@@ -2099,6 +2186,39 @@ mod tests {
         ALWAYS_USE_RELAY.store(true, Ordering::SeqCst);
         assert_eq!(set_always_use_relay("invalid"), Err(()));
         assert!(ALWAYS_USE_RELAY.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn relay_entries_are_normalized_without_capacity_suffixes() {
+        let cases = [
+            ("relay.example.com", "relay.example.com", 100),
+            ("relay.example.com:21117", "relay.example.com:21117", 100),
+            ("relay.example.com:21117:25", "relay.example.com:21117", 25),
+            ("192.0.2.10", "192.0.2.10", 100),
+            ("192.0.2.10:21117", "192.0.2.10:21117", 100),
+            ("192.0.2.10:21117:50", "192.0.2.10:21117", 50),
+            ("[2001:db8::1]:21117", "[2001:db8::1]:21117", 100),
+            ("[2001:db8::1]:21117:75", "[2001:db8::1]:21117", 75),
+        ];
+        for (input, address, capacity) in cases {
+            assert_eq!(
+                parse_relay_entry(input),
+                Some(RelayInfo {
+                    address: address.to_owned(),
+                    capacity,
+                })
+            );
+        }
+        for invalid in ["", "host:21117:bad", "host:21117:0", "host:21117:-1"] {
+            assert_eq!(parse_relay_entry(invalid), None);
+        }
+        assert_eq!(
+            normalize_relay_entries("relay.example.com:21117:10,relay.example.com:21117:20"),
+            vec![RelayInfo {
+                address: "relay.example.com:21117".to_owned(),
+                capacity: 10,
+            }]
+        );
     }
 
     #[hbb_common::tokio::test]
