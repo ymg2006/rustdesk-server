@@ -46,11 +46,7 @@ const BLACKLIST_FILE: &str = "blacklist.txt";
 const BLOCKLIST_FILE: &str = "blocklist.txt";
 
 #[tokio::main(flavor = "multi_thread")]
-pub async fn start_with_bind(
-    bind_addr: Option<IpAddr>,
-    port: &str,
-    key: &str,
-) -> ResultType<()> {
+pub async fn start_with_bind(bind_addr: Option<IpAddr>, port: &str, key: &str) -> ResultType<()> {
     let key = get_server_sk(key);
     if let Ok(mut file) = std::fs::File::open(BLACKLIST_FILE) {
         let mut contents = String::new();
@@ -337,10 +333,10 @@ async fn check_cmd(cmd: &str, limiter: Limiter) -> String {
 static ACTIVE_CONNS: AtomicUsize = AtomicUsize::new(0);
 
 async fn io_loop(
-  listener: TcpListener,
-  listener2: TcpListener,
-  listener_console: Option<TcpListener>,
-  key: &str,
+    listener: TcpListener,
+    listener2: TcpListener,
+    listener_console: Option<TcpListener>,
+    key: &str,
 ) {
     check_params();
     let limiter = <Limiter>::new(TOTAL_BANDWIDTH.load(Ordering::SeqCst) as _);
