@@ -11,8 +11,12 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      image_tag:
-        description: Docker Hub image tag to publish
+      VERSION_TAG:
+        description: 'Release tag name (e.g. v1.1.15). Leave empty to skip release.'
+        required: false
+        default: ''
+      api_image_tag:
+        description: rustdesk-api Docker Hub image tag to include
         required: true
         default: latest
   push:
@@ -26,7 +30,7 @@ env:
   CARGO_TERM_COLOR: always
   LATEST_TAG: latest
   DOCKER_IMAGE: ymg2006/rustdesk-server-s6
-  DOCKER_IMAGE_CLASSIC: ymg2006/rustdesk-server
+  VERSION_TAG: ${{ github.event.inputs.VERSION_TAG || '' }}
   
 jobs:
 
@@ -40,11 +44,12 @@ jobs:
           - { name: "amd64",   target: "x86_64-unknown-linux-musl" }
           - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
           - { name: "armv7",   target: "armv7-unknown-linux-musleabihf" }
-          - { name: "i386",    target: "i686-unknown-linux-musl" }
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -83,6 +88,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -112,9 +119,11 @@ jobs:
 
   # github (draft) release with all binaries
   release:
+    permissions:
+      contents: write
 
     name: Github release
-    if: github.event_name != 'workflow_dispatch'
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && github.event.inputs.VERSION_TAG != '')
     needs: 
       - build-linux
       - build-win
@@ -126,7 +135,6 @@ jobs:
           - { os: "linux", name: "amd64", suffix: "" }
           - { os: "linux", name: "arm64v8", suffix: "" }
           - { os: "linux", name: "armv7", suffix: "" }
-          - { os: "linux", name: "i386", suffix: "" }
           #- { os: "linux", name: "amd64fb", suffix: "" }
           - { os: "windows", name: "x86_64", suffix: "-unsigned" }
           
@@ -147,10 +155,14 @@ jobs:
           DEBIAN_FRONTEND=noninteractive sudo apt install -y zip
           zip ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip ${{ matrix.job.name }}/*
 
-      - name: Create Release (${{ matrix.job.os }} - (${{ matrix.job.name }})
-        uses: softprops/action-gh-release@v1
+      - name: Create Release (${{ matrix.job.os }} - ${{ matrix.job.name }})
+        uses: softprops/action-gh-release@v3
         with:
-          draft: true
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.VERSION_TAG }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.VERSION_TAG }}
+          target_commitish: ${{ github.sha }}
+          draft: false
+          allow_override: true
           files: ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip
             
   # docker build and push of single-arch images
@@ -166,7 +178,6 @@ jobs:
           - { name: "amd64",   docker_platform: "linux/amd64",  s6_platform: "x86_64" }
           - { name: "arm64v8", docker_platform: "linux/arm64",  s6_platform: "aarch64" }
           - { name: "armv7",   docker_platform: "linux/arm/v7", s6_platform: "armhf" }
-          - { name: "i386",    docker_platform: "linux/386",    s6_platform: "i686" }
 
     steps:
 
@@ -205,14 +216,21 @@ jobs:
       - name: Get git tag
         id: vars
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            T="${{ inputs.image_tag }}"
-          else
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             T="${GITHUB_REF_NAME#v}"
+          elif [ -n "$VERSION_TAG" ]; then
+            T="${VERSION_TAG#v}"
+          else
+            T="latest"
           fi
           M=${T%%.*}
           echo "GIT_TAG=$T" >> $GITHUB_ENV
           echo "MAJOR_TAG=$M" >> $GITHUB_ENV
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "API_IMAGE_TAG=${{ inputs.api_image_tag }}" >> $GITHUB_ENV
+          else
+            echo "API_IMAGE_TAG=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          fi
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -223,6 +241,7 @@ jobs:
           provenance: false
           build-args: |
             S6_ARCH=${{ matrix.job.s6_platform }}
+            API_IMAGE=ymg2006/rustdesk-api:${{ env.API_IMAGE_TAG }}
           tags: |
             ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
@@ -247,10 +266,12 @@ jobs:
       - name: Get git tag
         id: vars
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            T="${{ inputs.image_tag }}"
-          else
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             T="${GITHUB_REF_NAME#v}"
+          elif [ -n "$VERSION_TAG" ]; then
+            T="${VERSION_TAG#v}"
+          else
+            T="latest"
           fi
           M=${T%%.*}
           echo "GIT_TAG=$T" >> $GITHUB_ENV
@@ -260,10 +281,10 @@ jobs:
       #  this has to run only if invoked by a new tag
       - name: Create and push manifest (:ve.rs.ion)
         uses: Noelware/docker-manifest-action@0.4.3
-        if: github.event_name != 'workflow_dispatch'
+        if: env.GIT_TAG != 'latest'
         with:
           base-image: ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
-          extra-images: ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7,${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-i386
+          extra-images: ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7
           push: true
 
       # manifest for :1 tag (major release)
@@ -271,7 +292,7 @@ jobs:
         uses: Noelware/docker-manifest-action@0.4.3
         with:
           base-image: ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
-          extra-images: ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7,${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-i386
+          extra-images: ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7
           push: true
 
       # manifest for :latest tag
@@ -279,138 +300,13 @@ jobs:
         uses: Noelware/docker-manifest-action@0.4.3
         with:
           base-image: ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
-          extra-images: ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
+          extra-images: ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7
           push: true
 
             
-  # docker build and push of single-arch images
-  docker-classic:
-
-    name: Docker push - ${{ matrix.job.name }}
-    needs: build-linux
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        job:
-          - { name: "amd64",   docker_platform: "linux/amd64" }
-          - { name: "arm64v8", docker_platform: "linux/arm64" }
-          - { name: "armv7",   docker_platform: "linux/arm/v7" }
-
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-        
-      - name: Download binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-linux-${{ matrix.job.name }}
-          path: docker-classic/
-
-      - name: Make binaries executable
-        run: chmod -v a+x docker-classic/*
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
-        
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: ${{ env.DOCKER_IMAGE_CLASSIC }}
-
-      - name: Get git tag
-        id: vars
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            T="${{ inputs.image_tag }}"
-          else
-            T="${GITHUB_REF_NAME#v}"
-          fi
-          M=${T%%.*}
-          echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: "./docker-classic"
-          platforms: ${{ matrix.job.docker_platform }}
-          push: true
-          provenance: false
-          tags: |
-            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
-            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  # docker build and push of multiarch images
-  docker-manifest-classic:
-
-    name: Docker manifest
-    needs: docker-classic
-    runs-on: ubuntu-22.04
-
-    steps:
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
-
-      - name: Get git tag
-        id: vars
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            T="${{ inputs.image_tag }}"
-          else
-            T="${GITHUB_REF_NAME#v}"
-          fi
-          M=${T%%.*}
-          echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
-
-      # manifest for :1.2.3 tag
-      #  this has to run only if invoked by a new tag
-      - name: Create and push manifest (:ve.rs.ion)
-        uses: Noelware/docker-manifest-action@0.4.3
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          base-image: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
-          extra-images: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7
-          push: true
-
-      # manifest for :1 tag (major release)
-      - name: Create and push manifest (:major)
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          base-image: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
-          extra-images: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7
-          push: true
-
-      # manifest for :latest tag
-      - name: Create and push manifest (:latest)
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          base-image: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
-          extra-images: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7
-          push: true
-
-
   deb-package:
+    permissions:
+      contents: write
 
     name: debian package - ${{ matrix.job.name }}
     needs: build-linux
@@ -422,7 +318,6 @@ jobs:
           - { name: "amd64",   debian_platform: "amd64",   crossbuild_package: "" }
           - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "crossbuild-essential-arm64" }
           - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf" }
-          - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386" }
 
     steps:
 
@@ -455,9 +350,14 @@ jobs:
           debuild -i -us -uc -b -a${{ matrix.job.debian_platform }}
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && github.event.inputs.VERSION_TAG != '')
+        uses: softprops/action-gh-release@v3
         with:
-          draft: true
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.VERSION_TAG }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.VERSION_TAG }}
+          target_commitish: ${{ github.sha }}
+          draft: false
+          allow_override: true
           files: |
             debian-build/rustdesk-server-hbbr_*_${{ matrix.job.debian_platform }}.deb
             debian-build/rustdesk-server-hbbs_*_${{ matrix.job.debian_platform }}.deb

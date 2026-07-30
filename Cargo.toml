@@ -17,7 +17,7 @@ path = "src/utils.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hbb_common = { git = "https://github.com/ymg2006/hbb_common.git", rev = "69cea8dafee147848ae88702029f4bf7df7224c3" }
+hbb_common = { path = "libs/hbb_common" }
 serde_derive = "1.0"
 serde = "1.0"
 serde_json = "1.0"
@@ -59,11 +59,16 @@ reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocki
 
 [target.'cfg(not(any(target_os = "macos", target_os = "windows")))'.dependencies]
 reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocking", "socks", "json", "rustls-tls", "rustls-tls-native-roots", "gzip"], default-features=false }
+openssl = { version = "0.10", features = ["vendored"] }
 
 [build-dependencies]
-hbb_common = { git = "https://github.com/ymg2006/hbb_common.git", rev = "69cea8dafee147848ae88702029f4bf7df7224c3" }
+hbb_common = { path = "libs/hbb_common" }
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
 
 [workspace]
+members = ["libs/hbb_common"]
 exclude = ["ui"]
 
 #https://github.com/johnthagen/min-sized-rust
