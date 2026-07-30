@@ -16,9 +16,7 @@ use hbb_common::{
         register_pk_response::Result::{INVALID_ID_FORMAT, TOO_FREQUENT, UUID_MISMATCH},
         *,
     },
-    sodiumoxide::crypto::{
-        box_, box_::PublicKey, box_::SecretKey, secretbox, sign,
-    },
+    sodiumoxide::crypto::{box_, box_::PublicKey, box_::SecretKey, secretbox, sign},
     sodiumoxide::hex,
     tcp::Encrypt,
     tcp::FramedStream,
@@ -119,6 +117,57 @@ struct PunchReqEntry {
 static PUNCH_REQS: Lazy<TokioMutex<Vec<PunchReqEntry>>> = Lazy::new(|| TokioMutex::new(Vec::new()));
 const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
 static MUST_LOGIN: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionAuthError {
+    LicenseMismatch,
+    LoginRequired,
+    InvalidToken,
+    ServerMisconfigured,
+}
+
+fn validate_connection_auth(
+    supplied_licence_key: &str,
+    supplied_token: &str,
+    configured_licence_key: &str,
+    must_login: bool,
+) -> Result<(), ConnectionAuthError> {
+    validate_connection_auth_with(
+        supplied_licence_key,
+        supplied_token,
+        configured_licence_key,
+        must_login,
+        jwt::is_configured(),
+        |token| jwt::verify_token(token).is_ok(),
+    )
+}
+
+fn validate_connection_auth_with(
+    supplied_licence_key: &str,
+    supplied_token: &str,
+    configured_licence_key: &str,
+    must_login: bool,
+    jwt_configured: bool,
+    verify_token: impl FnOnce(&str) -> bool,
+) -> Result<(), ConnectionAuthError> {
+    if !configured_licence_key.is_empty() && supplied_licence_key != configured_licence_key {
+        return Err(ConnectionAuthError::LicenseMismatch);
+    }
+    if !must_login {
+        return Ok(());
+    }
+    if !jwt_configured {
+        return Err(ConnectionAuthError::ServerMisconfigured);
+    }
+    if supplied_token.is_empty() {
+        return Err(ConnectionAuthError::LoginRequired);
+    }
+    if verify_token(supplied_token) {
+        Ok(())
+    } else {
+        Err(ConnectionAuthError::InvalidToken)
+    }
+}
 
 #[derive(Clone)]
 struct Inner {
@@ -264,6 +313,9 @@ impl RendezvousServer {
                 "N"
             }
         );
+        if MUST_LOGIN.load(Ordering::SeqCst) && !jwt::is_configured() {
+            bail!("MUST_LOGIN=Y requires a non-empty RUSTDESK_API_JWT_KEY");
+        }
         if test_addr.to_lowercase() != "no" {
             let test_addr = if test_addr.is_empty() {
                 listener.local_addr()?
@@ -603,6 +655,21 @@ impl RendezvousServer {
                     return true;
                 }
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
+                    if let Err(err) = validate_connection_auth(
+                        &rf.licence_key,
+                        &rf.token,
+                        key,
+                        MUST_LOGIN.load(Ordering::SeqCst),
+                    ) {
+                        self.tcp_punch.lock().await.remove(&try_into_v4(addr));
+                        log::warn!(
+                            "Relay request authorization failed from {} for peer {}: {:?}",
+                            addr,
+                            rf.id,
+                            err
+                        );
+                        return false;
+                    }
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
@@ -965,40 +1032,50 @@ impl RendezvousServer {
         ws: bool,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
         let mut ph = ph;
-        if !key.is_empty() && ph.licence_key != key {
-            log::warn!(
-                "Authentication failed from {} for peer {} - invalid key",
-                addr,
-                ph.id
-            );
-            let mut msg_out = RendezvousMessage::new();
-            msg_out.set_punch_hole_response(PunchHoleResponse {
-                failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
-                ..Default::default()
-            });
-            return Ok((msg_out, None));
-        }
-        // if secret is not empty check token by jwt
-        if MUST_LOGIN.load(Ordering::SeqCst) {
-            if ph.token.is_empty() {
+        match validate_connection_auth(
+            &ph.licence_key,
+            &ph.token,
+            key,
+            MUST_LOGIN.load(Ordering::SeqCst),
+        ) {
+            Ok(()) => {}
+            Err(ConnectionAuthError::LicenseMismatch) => {
+                log::warn!(
+                    "Authentication failed from {} for peer {} - invalid key",
+                    addr,
+                    ph.id
+                );
+                let mut msg_out = RendezvousMessage::new();
+                msg_out.set_punch_hole_response(PunchHoleResponse {
+                    failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
+                    ..Default::default()
+                });
+                return Ok((msg_out, None));
+            }
+            Err(ConnectionAuthError::LoginRequired) => {
                 let mut msg_out = RendezvousMessage::new();
                 msg_out.set_punch_hole_response(PunchHoleResponse {
                     other_failure: String::from("Connection failed, please login!"),
                     ..Default::default()
                 });
                 return Ok((msg_out, None));
-            } else if !jwt::SECRET.is_empty() {
-                let token = ph.token;
-                let token = jwt::verify_token(token.as_str());
-                if token.is_err() {
-                    let mut msg_out = RendezvousMessage::new();
-                    msg_out.set_punch_hole_response(PunchHoleResponse {
-                        //提示重新登录
-                        other_failure: String::from("Token error, please log out and log back in!"),
-                        ..Default::default()
-                    });
-                    return Ok((msg_out, None));
-                }
+            }
+            Err(ConnectionAuthError::InvalidToken) => {
+                let mut msg_out = RendezvousMessage::new();
+                msg_out.set_punch_hole_response(PunchHoleResponse {
+                    other_failure: String::from("Token error, please log out and log back in!"),
+                    ..Default::default()
+                });
+                return Ok((msg_out, None));
+            }
+            Err(ConnectionAuthError::ServerMisconfigured) => {
+                log::error!("Connection authorization is enabled without a JWT secret");
+                let mut msg_out = RendezvousMessage::new();
+                msg_out.set_punch_hole_response(PunchHoleResponse {
+                    other_failure: String::from("Connection authentication is unavailable"),
+                    ..Default::default()
+                });
+                return Ok((msg_out, None));
             }
         }
         let id = ph.id;
@@ -1455,7 +1532,14 @@ impl RendezvousServer {
             Some("must-login" | "ml") => {
                 if let Some(rs) = fds.next() {
                     if rs.to_uppercase() == "Y" {
-                        MUST_LOGIN.store(true, Ordering::SeqCst);
+                        if jwt::is_configured() {
+                            MUST_LOGIN.store(true, Ordering::SeqCst);
+                        } else {
+                            let _ = writeln!(
+                                res,
+                                "Cannot enable MUST_LOGIN: RUSTDESK_API_JWT_KEY is empty"
+                            );
+                        }
                     } else {
                         MUST_LOGIN.store(false, Ordering::SeqCst);
                     }
@@ -1851,6 +1935,50 @@ fn get_symetric_key_from_msg(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn validate_auth(
+        supplied_licence_key: &str,
+        supplied_token: &str,
+        configured_licence_key: &str,
+        must_login: bool,
+        jwt_configured: bool,
+        valid_token: bool,
+    ) -> Result<(), ConnectionAuthError> {
+        validate_connection_auth_with(
+            supplied_licence_key,
+            supplied_token,
+            configured_licence_key,
+            must_login,
+            jwt_configured,
+            |_| valid_token,
+        )
+    }
+
+    #[test]
+    fn connection_auth_rules_are_consistent() {
+        assert_eq!(validate_auth("", "", "", false, false, false), Ok(()));
+        assert_eq!(
+            validate_auth("", "", "", true, true, false),
+            Err(ConnectionAuthError::LoginRequired)
+        );
+        assert_eq!(
+            validate_auth("", "bad", "", true, true, false),
+            Err(ConnectionAuthError::InvalidToken)
+        );
+        assert_eq!(validate_auth("", "valid", "", true, true, true), Ok(()));
+        assert_eq!(
+            validate_auth("wrong", "", "configured", false, false, false),
+            Err(ConnectionAuthError::LicenseMismatch)
+        );
+        assert_eq!(
+            validate_auth("anything", "", "", false, false, false),
+            Ok(())
+        );
+        assert_eq!(
+            validate_auth("", "token", "", true, false, true),
+            Err(ConnectionAuthError::ServerMisconfigured)
+        );
+    }
 
     #[hbb_common::tokio::test]
     async fn udp_listener_uses_bind_address() {

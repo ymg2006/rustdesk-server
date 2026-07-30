@@ -5,6 +5,10 @@ use std::env;
 pub static SECRET: Lazy<String> =
     Lazy::new(|| env::var("RUSTDESK_API_JWT_KEY").unwrap_or_else(|_| "".to_string()));
 
+pub fn is_configured() -> bool {
+    !SECRET.trim().is_empty()
+}
+
 // 定义一个结构体来表示 JWT 的 payload
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -13,7 +17,6 @@ pub struct Claims {
 }
 
 pub fn generate_token(user_id: u32, exp: i64) -> Result<String, String> {
-    println!("secret: {:}", SECRET.to_string());
     let claims = Claims {
         user_id,
         exp: (chrono::Utc::now() + chrono::Duration::seconds(exp)).timestamp() as usize,
