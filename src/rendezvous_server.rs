@@ -104,6 +104,20 @@ type RelayLoads = Arc<Mutex<HashMap<String, i32>>>;
 const CHECK_RELAY_TIMEOUT: u64 = 3_000;
 static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
 
+fn set_always_use_relay(value: &str) -> Result<(), ()> {
+    match value.to_ascii_uppercase().as_str() {
+        "Y" => {
+            ALWAYS_USE_RELAY.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        "N" => {
+            ALWAYS_USE_RELAY.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+        _ => Err(()),
+    }
+}
+
 // Store punch hole requests
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex; // differentiate if needed
@@ -1501,12 +1515,9 @@ impl RendezvousServer {
             }
             Some("always-use-relay" | "aur") => {
                 if let Some(rs) = fds.next() {
-                    if rs.to_uppercase() == "Y" {
-                        ALWAYS_USE_RELAY.store(true, Ordering::SeqCst);
-                    } else {
-                        ALWAYS_USE_RELAY.store(false, Ordering::SeqCst);
+                    if set_always_use_relay(rs).is_err() {
+                        let _ = writeln!(res, "Usage: always-use-relay [Y|N]");
                     }
-                    self.tx.send(Data::RelayServers0(rs.to_owned())).ok();
                 } else {
                     let _ = writeln!(
                         res,
@@ -2075,6 +2086,19 @@ mod tests {
             derived.as_ref().map(|key| key.as_ref()),
             Ok(expected.as_ref())
         );
+    }
+
+    #[test]
+    fn always_use_relay_toggle_accepts_only_y_or_n() {
+        ALWAYS_USE_RELAY.store(false, Ordering::SeqCst);
+        assert_eq!(set_always_use_relay("y"), Ok(()));
+        assert!(ALWAYS_USE_RELAY.load(Ordering::SeqCst));
+        assert_eq!(set_always_use_relay("N"), Ok(()));
+        assert!(!ALWAYS_USE_RELAY.load(Ordering::SeqCst));
+
+        ALWAYS_USE_RELAY.store(true, Ordering::SeqCst);
+        assert_eq!(set_always_use_relay("invalid"), Err(()));
+        assert!(ALWAYS_USE_RELAY.load(Ordering::SeqCst));
     }
 
     #[hbb_common::tokio::test]
